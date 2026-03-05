@@ -510,6 +510,7 @@
     justify-content: center;
     gap: .75rem;
     padding: 1rem;
+    position: relative;
   }
 
   .progress-dots {
@@ -771,6 +772,39 @@
   .filter-vivid { filter: saturate(1.8) contrast(1.1); }
   .filter-drama { filter: contrast(1.4) brightness(.9) saturate(.7); }
   .filter-golden { filter: sepia(.7) saturate(1.6) hue-rotate(-10deg) brightness(1.1); }
+
+  /* ── FLOATING FINISH BUTTON ── */
+  .btn-finish-float {
+    position: fixed;
+    bottom: 1.5rem;
+    left: 50%;
+    transform: translateX(-50%) translateY(120px);
+    z-index: 1000;
+    background: var(--red);
+    color: white;
+    border: none;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.6rem;
+    letter-spacing: .12em;
+    padding: 1rem 2.5rem;
+    cursor: pointer;
+    white-space: nowrap;
+    box-shadow: 0 8px 32px rgba(232,52,26,.6), 0 2px 8px rgba(0,0,0,.4);
+    transition: transform .4s cubic-bezier(.34,1.56,.64,1), box-shadow .2s, opacity .4s;
+    opacity: 0;
+    pointer-events: none;
+    border-radius: 2px;
+  }
+
+  .btn-finish-float.visible {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .btn-finish-float:active {
+    transform: translateX(-50%) scale(.96);
+  }
 
   /* ── CAMERA ERROR ── */
   .cam-error {
@@ -1147,8 +1181,7 @@
         <div class="strip-footer-date" id="stripDate"></div>
       </div>
       <div class="strip-actions" style="margin-top:.6rem;">
-        <button class="btn-strip-action primary" id="btnFinish" disabled>Finish →</button>
-        <button class="btn-strip-action secondary" id="btnRetake">Retake</button>
+        <button class="btn-strip-action secondary" id="btnRetake">↺ Retake</button>
       </div>
     </div>
 
@@ -1161,6 +1194,9 @@
     </div>
   </div>
 </div>
+
+<!-- Floating Finish CTA -->
+<button class="btn-finish-float" id="btnFinishFloat">✓ &nbsp;Done — See My Strip</button>
 
 <!-- ═════════ RESULT SCREEN ═════════ -->
 <div id="result" class="screen">
@@ -1284,8 +1320,8 @@
   const progressDots= document.getElementById('progressDots');
   const statusText  = document.getElementById('statusText');
   const btnShutter  = document.getElementById('btnShutter');
-  const btnFinish   = document.getElementById('btnFinish');
   const btnRetake   = document.getElementById('btnRetake');
+  const btnFinishFloat = document.getElementById('btnFinishFloat');
   const stripPhotos = document.getElementById('stripPhotos');
   const buildCanvas = document.getElementById('buildCanvas');
   const filterCanvas= document.getElementById('filterCanvas');
@@ -1456,7 +1492,7 @@
     ctx.restore();
     applyFilter(ctx, vw, vh, state.filter);
 
-    const dataURL = snapCanvas.toDataURL('image/jpeg', .92);
+    const dataURL = snapCanvas.toDataURL('image/jpeg', 0.97);
     state.photos.push(dataURL);
 
     const idx = state.currentShot;
@@ -1477,8 +1513,9 @@
       statusText.textContent = 'Ready — press the shutter';
       btnShutter.disabled = false;
     } else {
-      statusText.textContent = 'All done! Tap Finish →';
-      btnFinish.disabled = false;
+      statusText.textContent = 'All shots done! 🎉';
+      btnFinishFloat.classList.add('visible');
+      btnShutter.disabled = true;
     }
 
     state.shooting = false;
@@ -1491,14 +1528,15 @@
     buildStripSlots();
     buildProgressDots();
     updateDots();
-    btnFinish.disabled = true;
+    btnFinishFloat.classList.remove('visible');
     statusText.textContent = 'Ready — press the shutter';
     statusText.classList.remove('active-text');
     btnShutter.disabled = false;
   });
 
-  btnFinish.addEventListener('click', () => {
+  btnFinishFloat.addEventListener('click', () => {
     if (state.stream) state.stream.getTracks().forEach(t => t.stop());
+    btnFinishFloat.classList.remove('visible');
     buildResultScreen();
     showScreen('result');
   });
@@ -1559,16 +1597,21 @@
   document.getElementById('btnDownload').addEventListener('click', async () => {
     const tpl = TEMPLATES[state.template] || TEMPLATES.romantic;
     const [padTop, padRight, padBot, padLeft] = tpl.pad;
-    const W = 260;
+    
+    // Render at 3x for retina/crisp quality
+    const SCALE = 3;
+    const W = 320; // logical width
     const photoW = W - padLeft - padRight;
     const photoH = Math.round(photoW * 3 / 4);
     const gap = tpl.gap;
-    const footerH = 44;
+    const footerH = 52;
     const totalH = padTop + (photoH + gap) * state.photos.length - gap + footerH + padBot;
 
-    buildCanvas.width = W;
-    buildCanvas.height = totalH;
+    // Physical canvas size = logical * scale
+    buildCanvas.width  = W * SCALE;
+    buildCanvas.height = totalH * SCALE;
     const ctx = buildCanvas.getContext('2d');
+    ctx.scale(SCALE, SCALE);
 
     // Background
     if (tpl.bg.startsWith('linear-gradient')) {
@@ -1588,38 +1631,42 @@
       ctx.strokeRect(1.5, 1.5, W-3, totalH-3);
     }
 
-    // Photos
+    // Photos — draw from original high-res captures
     let y = padTop;
     for (let i = 0; i < state.photos.length; i++) {
       await new Promise(res => {
         const img = new Image();
         img.onload = () => {
-          filterCanvas.width = photoW;
-          filterCanvas.height = photoH;
+          // Use a temp canvas at logical size for filter (pixel ops)
+          filterCanvas.width  = photoW * SCALE;
+          filterCanvas.height = photoH * SCALE;
           const fc = filterCanvas.getContext('2d');
-          fc.drawImage(img, 0, 0, photoW, photoH);
-          applyFilter(fc, photoW, photoH, state.selectedFilter);
+          fc.drawImage(img, 0, 0, photoW * SCALE, photoH * SCALE);
+          applyFilter(fc, photoW * SCALE, photoH * SCALE, state.selectedFilter);
 
-          // Film borders
           if (state.template === 'film') {
+            const filmBar = 8;
             ctx.fillStyle = '#0A0A0A';
-            ctx.fillRect(padLeft, y, photoW, 7);
-            ctx.drawImage(filterCanvas, padLeft, y+7, photoW, photoH-14);
-            ctx.fillRect(padLeft, y+photoH-7, photoW, 7);
+            ctx.fillRect(padLeft, y, photoW, filmBar);
+            // draw scaled photo into logical coords
+            ctx.save();
+            ctx.scale(1/SCALE, 1/SCALE);
+            ctx.drawImage(filterCanvas, padLeft*SCALE, (y+filmBar)*SCALE, photoW*SCALE, (photoH-filmBar*2)*SCALE);
+            ctx.restore();
+            ctx.fillRect(padLeft, y+photoH-filmBar, photoW, filmBar);
           } else {
-            ctx.drawImage(filterCanvas, padLeft, y, photoW, photoH);
+            ctx.save();
+            ctx.scale(1/SCALE, 1/SCALE);
+            ctx.drawImage(filterCanvas, padLeft*SCALE, y*SCALE, photoW*SCALE, photoH*SCALE);
+            ctx.restore();
           }
 
-          // Border
+          // Border overlay
           if (tpl.imgBorder && tpl.imgBorder !== 'none') {
             const parts = tpl.imgBorder.split(' ');
             ctx.strokeStyle = parts[2] || '#ccc';
             ctx.lineWidth = parseFloat(parts[0]) || 1;
-            if (tpl.imgBorder.includes('dashed')) {
-              ctx.setLineDash([4,4]);
-            } else {
-              ctx.setLineDash([]);
-            }
+            ctx.setLineDash(tpl.imgBorder.includes('dashed') ? [5,5] : []);
             ctx.strokeRect(padLeft, y, photoW, photoH);
             ctx.setLineDash([]);
           }
@@ -1631,14 +1678,14 @@
       });
     }
 
-    // Footer
+    // Footer text
+    ctx.textAlign = 'center';
     ctx.fillStyle = tpl.footerColor;
     ctx.font = tpl.nameFont;
-    ctx.textAlign = 'center';
-    ctx.fillText(tpl.label, W/2, y + footerH/2 + 4);
+    ctx.fillText(tpl.label, W/2, y + footerH/2 + 5);
     ctx.fillStyle = tpl.datColor;
-    ctx.font = '9px sans-serif';
-    ctx.fillText(todayStr(), W/2, y + footerH/2 + 18);
+    ctx.font = '10px "DM Sans", sans-serif';
+    ctx.fillText(todayStr(), W/2, y + footerH/2 + 22);
 
     const link = document.createElement('a');
     link.download = `flashbox-${state.template}-${Date.now()}.png`;
